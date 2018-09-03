@@ -1,45 +1,118 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
+﻿using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.Model;
 using Microsoft.AspNetCore.Mvc;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace DynamoDbLocalSample.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    public class ValuesController : ControllerBase
+    public partial class ValuesController : ControllerBase
     {
-        // GET api/values
-        [HttpGet]
-        public ActionResult<IEnumerable<string>> Get()
+        private const string TableName = "SampleData";
+
+        private readonly IAmazonDynamoDB _amazonDynamoDb;
+
+        public ValuesController(IAmazonDynamoDB amazonDynamoDb)
         {
-            return new string[] { "value1", "value2" };
+            _amazonDynamoDb = amazonDynamoDb;
+        }
+
+        // GET api/values/init
+        [HttpGet]
+        [Route("init")]
+        public async Task Initialise()
+        {
+            var request = new ListTablesRequest
+            {
+                Limit = 10
+            };
+
+            var response = await _amazonDynamoDb.ListTablesAsync(request);
+
+            var results = response.TableNames;
+
+            if (!results.Contains(TableName))
+            {
+                var createRequest = new CreateTableRequest
+                {
+                    TableName = TableName,
+                    AttributeDefinitions = new List<AttributeDefinition>
+                    {
+                        new AttributeDefinition
+                        {
+                            AttributeName = "Id",
+                            AttributeType = "N"
+                        }
+                    },
+                    KeySchema = new List<KeySchemaElement>
+                    {
+                        new KeySchemaElement
+                        {
+                            AttributeName = "Id",
+                            KeyType = "HASH"  //Partition key
+                        }
+                    },
+                    ProvisionedThroughput = new ProvisionedThroughput
+                    {
+                        ReadCapacityUnits = 2,
+                        WriteCapacityUnits = 2
+                    }
+                };
+
+                 await _amazonDynamoDb.CreateTableAsync(createRequest);
+            }
         }
 
         // GET api/values/5
         [HttpGet("{id}")]
-        public ActionResult<string> Get(int id)
+        public async Task<ActionResult<string>> Get(int id)
         {
-            return "value";
+            var request = new GetItemRequest
+            {
+                TableName = TableName,
+                Key = new Dictionary<string, AttributeValue> { { "Id", new AttributeValue { N = id.ToString() } } }
+            };
+
+            var response = await _amazonDynamoDb.GetItemAsync(request);
+
+            if (!response.IsItemSet)
+                return NotFound();
+
+            return response.Item["Title"].S;
         }
 
         // POST api/values
         [HttpPost]
-        public void Post([FromBody] string value)
+        public async Task Post([FromBody] PostInput input)
         {
-        }
+            var request = new PutItemRequest
+            {
+                TableName = TableName,
+                Item = new Dictionary<string, AttributeValue>
+                {
+                    { "Id", new AttributeValue { N = input.Id.ToString() }},
+                    { "Title", new AttributeValue { S = input.Title }}
+                }
+            };
 
-        // PUT api/values/5
-        [HttpPut("{id}")]
-        public void Put(int id, [FromBody] string value)
-        {
+            await _amazonDynamoDb.PutItemAsync(request);
         }
 
         // DELETE api/values/5
         [HttpDelete("{id}")]
-        public void Delete(int id)
+        public async Task<IActionResult> Delete(int id)
         {
+            var request = new DeleteItemRequest
+            {
+                TableName = TableName,
+                Key = new Dictionary<string, AttributeValue> { { "Id", new AttributeValue { N = id.ToString() } } }
+            };
+
+            var response = await _amazonDynamoDb.DeleteItemAsync(request);
+
+            return StatusCode((int)response.HttpStatusCode);
         }
     }
 }
